@@ -87,7 +87,150 @@ plt.tight_layout()
 plt.show()
 
 # =============================
-# 4. Separar dados em treino e teste
+# 4. Detecção e Tratamento de Outliers
+# =============================
+print("\n" + "="*60)
+print("DETECÇÃO E TRATAMENTO DE OUTLIERS")
+print("="*60)
+
+# Criar cópia dos dados originais
+df_original = df.copy()
+
+# Método 1: Z-Score (valores com |Z| > 3 são considerados outliers)
+from scipy import stats
+z_scores = np.abs(stats.zscore(df["Log_Total"]))
+outliers_zscore = z_scores > 3
+
+print(f"\n🔍 Detecção de Outliers (Z-Score > 3):")
+print(f"   Total de outliers encontrados: {outliers_zscore.sum()}")
+
+if outliers_zscore.sum() > 0:
+    print(f"\n📍 Outliers identificados:")
+    outlier_dates = df[outliers_zscore].index
+    for date in outlier_dates:
+        value = df.loc[date, "Log_Total"]
+        z_score = z_scores[df.index == date][0]
+        print(f"   - {date.strftime('%d/%m/%Y')}: Log_Total = {value:.4f} (Z-Score = {z_score:.2f})")
+
+# Método 2: IQR (Interquartile Range)
+Q1 = df["Log_Total"].quantile(0.25)
+Q3 = df["Log_Total"].quantile(0.75)
+IQR = Q3 - Q1
+lower_bound = Q1 - 1.5 * IQR
+upper_bound = Q3 + 1.5 * IQR
+
+outliers_iqr = (df["Log_Total"] < lower_bound) | (df["Log_Total"] > upper_bound)
+
+print(f"\n🔍 Detecção de Outliers (IQR Method):")
+print(f"   Q1 (25%): {Q1:.4f}")
+print(f"   Q3 (75%): {Q3:.4f}")
+print(f"   IQR: {IQR:.4f}")
+print(f"   Limite inferior: {lower_bound:.4f}")
+print(f"   Limite superior: {upper_bound:.4f}")
+print(f"   Total de outliers: {outliers_iqr.sum()}")
+
+if outliers_iqr.sum() > 0:
+    print(f"\n📍 Outliers identificados (IQR):")
+    outlier_dates_iqr = df[outliers_iqr].index
+    for date in outlier_dates_iqr:
+        value = df.loc[date, "Log_Total"]
+        print(f"   - {date.strftime('%d/%m/%Y')}: Log_Total = {value:.4f}")
+
+# Combinar outliers detectados pelos dois métodos
+outliers_combined = outliers_zscore | outliers_iqr
+print(f"\n📊 Total de outliers únicos (ambos os métodos): {outliers_combined.sum()}")
+
+# Opções de tratamento de outliers
+print(f"\n⚙️  OPÇÕES DE TRATAMENTO:")
+print(f"   1. Manter outliers (sem tratamento)")
+print(f"   2. Substituir por interpolação linear")
+print(f"   3. Substituir por média móvel de 3 meses")
+print(f"   4. Winsorização (limitar aos limites do IQR)")
+
+# CONFIGURAÇÃO: Escolha o método de tratamento
+OUTLIER_TREATMENT = 2  # 1=sem tratamento, 2=interpolação, 3=média móvel, 4=winsorização
+
+if OUTLIER_TREATMENT == 1:
+    print(f"\n✅ Outliers mantidos (sem tratamento)")
+    df_treated = df.copy()
+    
+elif OUTLIER_TREATMENT == 2:
+    print(f"\n🔄 Aplicando interpolação linear nos outliers...")
+    df_treated = df.copy()
+    # Marcar outliers como NaN e interpolar
+    df_treated.loc[outliers_combined, "Log_Total"] = np.nan
+    df_treated["Log_Total"] = df_treated["Log_Total"].interpolate(method='linear')
+    
+    # Mostrar valores substituídos
+    print(f"\n📝 Valores substituídos:")
+    for date in df[outliers_combined].index:
+        old_value = df.loc[date, "Log_Total"]
+        new_value = df_treated.loc[date, "Log_Total"]
+        print(f"   - {date.strftime('%d/%m/%Y')}: {old_value:.4f} → {new_value:.4f}")
+    
+elif OUTLIER_TREATMENT == 3:
+    print(f"\n🔄 Aplicando média móvel de 3 meses nos outliers...")
+    df_treated = df.copy()
+    rolling_mean = df["Log_Total"].rolling(window=3, center=True, min_periods=1).mean()
+    df_treated.loc[outliers_combined, "Log_Total"] = rolling_mean[outliers_combined]
+    
+    print(f"\n📝 Valores substituídos:")
+    for date in df[outliers_combined].index:
+        old_value = df.loc[date, "Log_Total"]
+        new_value = df_treated.loc[date, "Log_Total"]
+        print(f"   - {date.strftime('%d/%m/%Y')}: {old_value:.4f} → {new_value:.4f}")
+    
+elif OUTLIER_TREATMENT == 4:
+    print(f"\n🔄 Aplicando Winsorização (limitando aos bounds do IQR)...")
+    df_treated = df.copy()
+    df_treated.loc[df_treated["Log_Total"] < lower_bound, "Log_Total"] = lower_bound
+    df_treated.loc[df_treated["Log_Total"] > upper_bound, "Log_Total"] = upper_bound
+    
+    print(f"\n📝 Valores limitados:")
+    for date in df[outliers_combined].index:
+        old_value = df.loc[date, "Log_Total"]
+        new_value = df_treated.loc[date, "Log_Total"]
+        if old_value != new_value:
+            print(f"   - {date.strftime('%d/%m/%Y')}: {old_value:.4f} → {new_value:.4f}")
+
+# Visualizar antes e depois
+plt.figure(figsize=(16, 6))
+
+plt.subplot(1, 2, 1)
+plt.plot(df.index, df["Log_Total"], marker='o', linewidth=2, markersize=5, label='Original')
+if outliers_combined.sum() > 0:
+    plt.scatter(df[outliers_combined].index, df.loc[outliers_combined, "Log_Total"], 
+                color='red', s=100, zorder=5, label='Outliers', marker='X')
+plt.xlabel('Data', fontsize=12, fontweight='bold')
+plt.ylabel('Log_Total', fontsize=12, fontweight='bold')
+plt.title('Série Original com Outliers Destacados', fontsize=13, fontweight='bold')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.xticks(rotation=45)
+
+plt.subplot(1, 2, 2)
+plt.plot(df_treated.index, df_treated["Log_Total"], marker='o', linewidth=2, markersize=5, 
+         label='Tratado', color='green')
+if OUTLIER_TREATMENT > 1 and outliers_combined.sum() > 0:
+    plt.scatter(df_treated[outliers_combined].index, df_treated.loc[outliers_combined, "Log_Total"], 
+                color='blue', s=100, zorder=5, label='Valores Substituídos', marker='s')
+plt.xlabel('Data', fontsize=12, fontweight='bold')
+plt.ylabel('Log_Total', fontsize=12, fontweight='bold')
+plt.title('Série Após Tratamento de Outliers', fontsize=13, fontweight='bold')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.xticks(rotation=45)
+
+plt.tight_layout()
+plt.show()
+
+# Atualizar dataframe para usar dados tratados
+df = df_treated.copy()
+
+print(f"\n✅ Dados atualizados com tratamento de outliers!")
+
+# =============================
+# 5. Separar dados em treino e teste
 # =============================
 # CONFIGURAÇÃO: Escolha o tamanho do conjunto de teste
 # Opção 1: Usar porcentagem (ex: 80% treino, 20% teste)
@@ -108,7 +251,7 @@ print(f"   Período de treino: {train.index.min().strftime('%d/%m/%Y')} até {tr
 print(f"   Período de teste: {test.index.min().strftime('%d/%m/%Y')} até {test.index.max().strftime('%d/%m/%Y')}")
 
 # =============================
-# 5. Ajustar o modelo SARIMAX
+# 6. Ajustar o modelo SARIMAX
 # =============================
 print("\n" + "="*60)
 print("AJUSTANDO MODELO SARIMAX")
@@ -137,12 +280,12 @@ print("-"*60)
 print(results.summary())
 
 # =============================
-# 6. Gráficos de diagnóstico dos resíduos (SERÁ MOVIDO PARA DEPOIS DO MODELO COM 48 OBS)
+# 7. Gráficos de diagnóstico dos resíduos (SERÁ MOVIDO PARA DEPOIS DO MODELO COM 48 OBS)
 # =============================
 # Este gráfico será gerado após treinar o modelo com todas as 48 observações
 
 # =============================
-# 7. Previsões e Métricas de Erro
+# 8. Previsões e Métricas de Erro
 # =============================
 print("\n" + "="*60)
 print("PREVISÕES E MÉTRICAS DE ERRO")
@@ -165,7 +308,7 @@ print(f"   - Dados de TESTE: {len(test)} observações (estas são usadas para c
 print(f"   - Período de teste: {test.index.min().strftime('%m/%Y')} até {test.index.max().strftime('%m/%Y')}")
 
 # =============================
-# 8. Calcular métricas de erro
+# 9. Calcular métricas de erro
 # =============================
 
 def calculate_metrics(y_true, y_pred, set_name=""):
@@ -221,7 +364,7 @@ print(f"\n⚠️  IMPORTANTE: As métricas de TESTE foram calculadas com base em
 print(f"   Se deseja usar as últimas 12 observações, altere a linha 'train_size' no código.")
 
 # =============================
-# 9. Critérios de Informação
+# 10. Critérios de Informação
 # =============================
 print("\n" + "="*60)
 print("CRITÉRIOS DE INFORMAÇÃO DO MODELO")
@@ -231,7 +374,7 @@ print(f"  BIC  (Bayesian Information Criterion):      {results.bic:.4f}")
 print(f"  HQIC (Hannan-Quinn Information Criterion):  {results.hqic:.4f}")
 
 # =============================
-# 10. Reverter LOG e Criar Previsão do Escritório Contábil
+# 11. Reverter LOG e Criar Previsão do Escritório Contábil
 # =============================
 print("\n" + "="*60)
 print("REVERTENDO LOG E CRIANDO PREVISÃO DO ESCRITÓRIO")
@@ -259,7 +402,7 @@ print(f"✅ Previsão do Escritório Contábil criada (valor ano anterior × 1.1
 print(f"   - Previsão do escritório disponível a partir de: {df.index[12].strftime('%m/%Y')}")
 
 # =============================
-# 11. Visualização das Previsões (a partir de 2023)
+# 12. Visualização das Previsões (a partir de 2023)
 # =============================
 print("\n" + "="*60)
 print("VISUALIZAÇÃO DAS PREVISÕES (A PARTIR DE 2023)")
@@ -322,7 +465,7 @@ plt.tight_layout()
 plt.show()
 
 # =============================
-# 12. Comparação de Métricas: SARIMAX vs Escritório Contábil
+# 13. Comparação de Métricas: SARIMAX vs Escritório Contábil
 # =============================
 print("\n" + "="*60)
 print("COMPARAÇÃO DE DESEMPENHO: SARIMAX vs ESCRITÓRIO")
@@ -404,7 +547,7 @@ plt.tight_layout()
 plt.show()
 
 # =============================
-# 13. Tabela de Comparação Detalhada
+# 14. Tabela de Comparação Detalhada
 # =============================
 print("\n" + "="*60)
 print("TABELA DE COMPARAÇÃO: SARIMAX vs ESCRITÓRIO (TESTE)")
@@ -433,7 +576,7 @@ comparison_df['Erro_%_Escritório'] = comparison_df['Erro_%_Escritório'].apply(
 print("\n" + comparison_df.to_string(index=False))
 
 # =============================
-# 14. Resumo Final Atualizado
+# 15. Resumo Final Atualizado
 # =============================
 print("\n" + "="*60)
 print("RESUMO FINAL DA ANÁLISE")
@@ -464,7 +607,7 @@ print("ANÁLISE CONCLUÍDA COM SUCESSO!")
 print("="*60)
 
 # =============================
-# 15. MODELO FINAL COM TODAS AS 48 OBSERVAÇÕES
+# 16. MODELO FINAL COM TODAS AS 48 OBSERVAÇÕES
 # =============================
 print("\n" + "="*80)
 print("MODELO FINAL: TREINAMENTO COM TODAS AS 48 OBSERVAÇÕES")
@@ -492,7 +635,7 @@ print(f"  BIC  (Bayesian Information Criterion):      {results_full.bic:.4f}")
 print(f"  HQIC (Hannan-Quinn Information Criterion):  {results_full.hqic:.4f}")
 
 # =============================
-# 15.1. DIAGNÓSTICO DOS RESÍDUOS DO MODELO FINAL (48 OBSERVAÇÕES)
+# 16.1. DIAGNÓSTICO DOS RESÍDUOS DO MODELO FINAL (48 OBSERVAÇÕES)
 # =============================
 print("\n" + "="*80)
 print("DIAGNÓSTICO DOS RESÍDUOS - MODELO FINAL (48 OBSERVAÇÕES)")
@@ -504,7 +647,7 @@ plt.tight_layout()
 plt.show()
 
 # =============================
-# 15.2. ANÁLISE DE RESÍDUOS DO MODELO FINAL
+# 16.2. ANÁLISE DE RESÍDUOS DO MODELO FINAL
 # =============================
 print("\n" + "="*80)
 print("ANÁLISE DETALHADA DOS RESÍDUOS - MODELO FINAL")
@@ -569,7 +712,7 @@ plt.tight_layout()
 plt.show()
 
 # =============================
-# 16. PREVISÃO PARA OS PRÓXIMOS 12 MESES
+# 17. PREVISÃO PARA OS PRÓXIMOS 12 MESES
 # =============================
 print("\n" + "="*80)
 print("PREVISÃO PARA OS PRÓXIMOS 12 MESES")
@@ -614,7 +757,7 @@ print(f"✅ Previsões geradas com sucesso!")
 print(f"\n📅 Período de previsão: {future_dates[0].strftime('%m/%Y')} até {future_dates[-1].strftime('%m/%Y')}")
 
 # =============================
-# 17. TABELA DE PREVISÕES FUTURAS
+# 18. TABELA DE PREVISÕES FUTURAS
 # =============================
 print("\n" + "="*80)
 print("TABELA DE PREVISÕES PARA OS PRÓXIMOS 12 MESES")
@@ -638,7 +781,7 @@ future_comparison_display['Diferença_%'] = future_comparison_display['Diferenç
 print("\n" + future_comparison_display.to_string(index=False))
 
 # =============================
-# 18. GRÁFICO DE PREVISÕES FUTURAS
+# 19. GRÁFICO DE PREVISÕES FUTURAS
 # =============================
 print("\n" + "="*80)
 print("VISUALIZAÇÃO DAS PREVISÕES FUTURAS")
@@ -709,7 +852,7 @@ plt.tight_layout()
 plt.show()
 
 # =============================
-# 19. ESTATÍSTICAS DAS PREVISÕES FUTURAS
+# 20. ESTATÍSTICAS DAS PREVISÕES FUTURAS
 # =============================
 print("\n" + "="*80)
 print("ESTATÍSTICAS DAS PREVISÕES FUTURAS")
@@ -743,7 +886,7 @@ print("ANÁLISE COMPLETA FINALIZADA!")
 print("="*80)
 
 # =============================
-# 20. MODELO ETS (Error, Trend, Seasonality)
+# 21. MODELO ETS (Error, Trend, Seasonality)
 # =============================
 print("\n" + "="*80)
 print("MODELO ETS (EXPONENTIAL SMOOTHING)")
@@ -778,7 +921,7 @@ print("\n" + "📊 MODELO ETS (Exponential Smoothing)")
 ets_metrics = calculate_metrics(y_test_original, ets_forecast, "ETS - Out-of-Sample")
 
 # =============================
-# 21. ENSEMBLE: COMBINAÇÃO SARIMAX + ETS
+# 22. ENSEMBLE: COMBINAÇÃO SARIMAX + ETS
 # =============================
 print("\n" + "="*80)
 print("MODELO ENSEMBLE: SARIMAX + ETS COM OTIMIZAÇÃO DE PESOS")
@@ -825,7 +968,7 @@ print("\n" + "🎯 MODELO ENSEMBLE (SARIMAX + ETS)")
 ensemble_metrics = calculate_metrics(y_test_original, ensemble_forecast, "Ensemble - Out-of-Sample")
 
 # =============================
-# 22. COMPARAÇÃO DE TODOS OS MODELOS
+# 23. COMPARAÇÃO DE TODOS OS MODELOS
 # =============================
 print("\n" + "="*80)
 print("COMPARAÇÃO COMPLETA: TODOS OS MODELOS")
@@ -850,7 +993,7 @@ best_model = min(models_comparison, key=models_comparison.get)
 print(f"\n🏆 MELHOR MODELO: {best_model} (MAPE: {models_comparison[best_model]:.2f}%)")
 
 # =============================
-# 23. GRÁFICO COMPARATIVO - TODOS OS MODELOS
+# 24. GRÁFICO COMPARATIVO - TODOS OS MODELOS
 # =============================
 print("\n" + "="*80)
 print("VISUALIZAÇÃO COMPARATIVA DE TODOS OS MODELOS")
@@ -878,7 +1021,7 @@ plt.tight_layout()
 plt.show()
 
 # =============================
-# 24. PREVISÕES FUTURAS COM ENSEMBLE
+# 25. PREVISÕES FUTURAS COM ENSEMBLE
 # =============================
 print("\n" + "="*80)
 print("PREVISÕES FUTURAS COM MODELO ENSEMBLE")
@@ -933,7 +1076,7 @@ future_all_models_display['Escritório'] = future_all_models_display['Escritóri
 print("\n" + future_all_models_display.to_string(index=False))
 
 # =============================
-# 25. GRÁFICO DE PREVISÕES FUTURAS - TODOS OS MODELOS
+# 26. GRÁFICO DE PREVISÕES FUTURAS - TODOS OS MODELOS
 # =============================
 print("\n" + "="*80)
 print("VISUALIZAÇÃO DAS PREVISÕES FUTURAS - TODOS OS MODELOS")
@@ -972,7 +1115,7 @@ plt.tight_layout()
 plt.show()
 
 # =============================
-# 26. ESTATÍSTICAS FINAIS - PREVISÕES FUTURAS
+# 27. ESTATÍSTICAS FINAIS - PREVISÕES FUTURAS
 # =============================
 print("\n" + "="*80)
 print("ESTATÍSTICAS DAS PREVISÕES FUTURAS - TODOS OS MODELOS")
